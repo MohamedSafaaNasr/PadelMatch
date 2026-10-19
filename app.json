@@ -1,19 +1,22 @@
 {
   "expo": {
     "name": "padelMatchCount",
-    "slug": "padelMatchCount",
-    "version": "1.0.0",
+    "slug": "padelmatchcount",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.mohamed.nasr.padelmatchcount",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,6 +27,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7cac7e7a-e70a-4ef1-9198-9c61fb0180e2"
+      }
+    },
+    "owner": "mohamed.nasr"
   }
 }
