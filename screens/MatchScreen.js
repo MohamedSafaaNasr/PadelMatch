@@ -1,484 +1,661 @@
-import React, { useState, useRef } from "react";
+
+import React, { useReducer, useRef } from "react";
 import {
+  Alert,
+  SafeAreaView,
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
-  TextInput,
-  Modal,
-  Alert,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  useWindowDimensions,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Sharing from "expo-sharing";
 import { captureRef } from "react-native-view-shot";
 
-const MatchScreen = () => {
-  const navigation = useNavigation();
-  const viewRef = useRef();
-  const [team1Score, setTeam1Score] = useState(0);
-  const [team2Score, setTeam2Score] = useState(0);
-  const [team1Games, setTeam1Games] = useState(0);
-  const [team2Games, setTeam2Games] = useState(0);
-  const [team1Sets, setTeam1Sets] = useState(0);
-  const [team2Sets, setTeam2Sets] = useState(0);
-  const [team1Name, setTeam1Name] = useState("Team 1");
-  const [team2Name, setTeam2Name] = useState("Team 2");
-  const [editingTeam, setEditingTeam] = useState(null);
-  const [tempName, setTempName] = useState("");
+const COLORS = {
+  background: "#F7F9F6",
+  lime: "#D8FF36",
+  darkGreen: "#173D2F",
+  dark: "#14201B",
+  coral: "#FF684F",
+  muted: "#708078",
+  border: "#DCE4DE",
+  white: "#FFFFFF",
+};
 
-  const padelPoints = [0, 15, 30, 40];
+const INITIAL_PLAYERS = [
+  { name: "Team 1", initials: "T1", color: "#E0ECE4" },
+  { name: "Team 2", initials: "T2", color: "#FFE4DD" },
+];
 
-  const getScoreDisplay = (score) => {
-    if (score < 4) return padelPoints[score];
-    return "AD";
+const createInitialPlayers = () =>
+  INITIAL_PLAYERS.map((player) => ({
+    ...player,
+    score: 0,
+    games: 0,
+    sets: 0,
+  }));
+
+const initialMatchState = {
+  players: createInitialPlayers(),
+  matchFinished: false,
+};
+
+function matchReducer(state, action) {
+  if (action.type === "reset") {
+    return {
+      players: createInitialPlayers(),
+      matchFinished: false,
+    };
+  }
+
+  if (action.type !== "addPoint" || state.matchFinished) {
+    return state;
+  }
+
+  const { playerIndex } = action;
+  if (playerIndex !== 0 && playerIndex !== 1) {
+    return state;
+  }
+
+  const players = state.players.map((player) => ({ ...player }));
+  const opponentIndex = playerIndex === 0 ? 1 : 0;
+  const player = players[playerIndex];
+  const opponent = players[opponentIndex];
+  const isTieBreak = players[0].games === 6 && players[1].games === 6;
+
+  player.score += 1;
+
+  const pointTarget = isTieBreak ? 7 : 4;
+  if (
+    player.score < pointTarget ||
+    player.score - opponent.score < 2
+  ) {
+    return { ...state, players };
+  }
+
+  player.games += 1;
+  player.score = 0;
+  opponent.score = 0;
+
+  const setWon =
+    isTieBreak ||
+    (player.games >= 6 && player.games - opponent.games >= 2);
+
+  if (!setWon) {
+    return { ...state, players };
+  }
+
+  player.sets += 1;
+  player.games = 0;
+  opponent.games = 0;
+
+  return {
+    players,
+    matchFinished: player.sets >= 2,
   };
+}
 
-  const addPointTeam1 = () => {
-    let newScore = team1Score + 1;
-    let newTeam2Score = team2Score;
+const getDisplayedScore = (players, playerIndex) => {
+  const player = players[playerIndex];
+  const opponent = players[playerIndex === 0 ? 1 : 0];
+  const isTieBreak = players[0].games === 6 && players[1].games === 6;
 
-    // Deuce and advantage logic
-    if (team1Score >= 3 && team2Score >= 3) {
-      if (team1Score === team2Score) {
-        setTeam1Score(4);
-        return;
-      }
-      if (team1Score === 4) {
-        winGame(1);
-        return;
-      }
-      setTeam1Score(4);
-      setTeam2Score(3);
+  if (isTieBreak) {
+    return String(player.score);
+  }
+
+  if (player.score >= 3 && opponent.score >= 3) {
+    if (player.score === opponent.score) return "40";
+    return player.score > opponent.score ? "AD" : "40";
+  }
+
+  return ["Love", "15", "30", "40"][player.score];
+};
+
+export default function MatchScreen() {
+  const { width } = useWindowDimensions();
+  const scoreboardRef = useRef(null);
+
+  const [match, dispatch] = useReducer(matchReducer, initialMatchState);
+  const { players, matchFinished } = match;
+  const setNumber = players[0].sets + players[1].sets + 1;
+  const isTieBreak = players[0].games === 6 && players[1].games === 6;
+  const resetMatch = () => dispatch({ type: "reset" });
+  const addPoint = (playerIndex) =>
+    dispatch({ type: "addPoint", playerIndex });
+
+  const gamesText = `${players[0].games}–${players[1].games}`;
+  const shareMatch = async () => {
+    if (!scoreboardRef.current) {
+      Alert.alert(
+        "Unable to share match image",
+        "The scoreboard is not ready."
+      );
       return;
     }
 
-    // Normal scoring
-    if (newScore >= 4) {
-      winGame(1);
-    } else {
-      setTeam1Score(newScore);
-    }
-  };
-
-  const addPointTeam2 = () => {
-    let newScore = team2Score + 1;
-
-    // Deuce and advantage logic
-    if (team1Score >= 3 && team2Score >= 3) {
-      if (team1Score === team2Score) {
-        setTeam2Score(4);
-        return;
-      }
-      if (team2Score === 4) {
-        winGame(2);
-        return;
-      }
-      setTeam2Score(4);
-      setTeam1Score(3);
-      return;
-    }
-
-    // Normal scoring
-    if (newScore >= 4) {
-      winGame(2);
-    } else {
-      setTeam2Score(newScore);
-    }
-  };
-
-  const winGame = (team) => {
-    setTeam1Score(0);
-    setTeam2Score(0);
-
-    if (team === 1) {
-      const newGames = team1Games + 1;
-      if (newGames >= 6 && newGames - team2Games >= 2) {
-        winSet(1);
-      } else if (newGames === 7 && team2Games === 6) {
-        winSet(1);
-      } else {
-        setTeam1Games(newGames);
-      }
-    } else {
-      const newGames = team2Games + 1;
-      if (newGames >= 6 && newGames - team1Games >= 2) {
-        winSet(2);
-      } else if (newGames === 7 && team1Games === 6) {
-        winSet(2);
-      } else {
-        setTeam2Games(newGames);
-      }
-    }
-  };
-
-  const winSet = (team) => {
-    if (team === 1) {
-      setTeam1Sets(team1Sets + 1);
-    } else {
-      setTeam2Sets(team2Sets + 1);
-    }
-    setTeam1Games(0);
-    setTeam2Games(0);
-  };
-
-  const resetMatch = () => {
-    setTeam1Score(0);
-    setTeam2Score(0);
-    setTeam1Games(0);
-    setTeam2Games(0);
-    setTeam1Sets(0);
-    setTeam2Sets(0);
-  };
-
-  const openEditModal = (team) => {
-    setEditingTeam(team);
-    setTempName(team === 1 ? team1Name : team2Name);
-  };
-
-  const saveTeamName = () => {
-    if (tempName.trim()) {
-      if (editingTeam === 1) {
-        setTeam1Name(tempName.trim());
-      } else {
-        setTeam2Name(tempName.trim());
-      }
-    }
-    setEditingTeam(null);
-    setTempName("");
-  };
-
-  const shareScore = async () => {
     try {
-      const uri = await captureRef(viewRef, {
-        format: "png",
-        quality: 0.9,
-        result: "tmpfile",
-      });
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert(
+          "Sharing unavailable",
+          "Image sharing is not available on this device."
+        );
+        return;
+      }
 
-      await Sharing.shareAsync(uri, {
+      const imageUri = await captureRef(scoreboardRef, {
+        format: "png",
+        quality: 1,
+      });
+      await Sharing.shareAsync(imageUri, {
         mimeType: "image/png",
-        dialogTitle: "Share Match Score",
+        dialogTitle: "Share match score",
+        UTI: "public.png",
       });
     } catch (error) {
-      Alert.alert("Error", `Failed to share: ${error.message}`);
-      console.error("Share error:", error);
+      Alert.alert(
+        "Unable to share match image",
+        error instanceof Error ? error.message : "Please try again."
+      );
     }
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={28} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.title}>Match Score</Text>
-        <TouchableOpacity style={styles.shareButton} onPress={shareScore}>
-          <Ionicons name="share-social" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
 
-      <View style={styles.screenshotView} ref={viewRef} collapsable={false}>
-        <View style={styles.scoreBoard}>
-          <View style={styles.teamColumn}>
-            <TouchableOpacity
-              style={styles.teamHeader}
-              onPress={() => openEditModal(1)}
-            >
-              <Text style={styles.teamName}>{team1Name}</Text>
-              <Ionicons
-                name="pencil"
-                size={16}
-                color="rgba(255, 255, 255, 0.6)"
-                style={styles.editIcon}
-              />
-            </TouchableOpacity>
-            <View style={styles.scoreRow}>
-              <Text style={styles.scoreLabel}>Sets</Text>
-              <Text style={styles.scoreValue}>{team1Sets}</Text>
-            </View>
-            <View style={styles.scoreRow}>
-              <Text style={styles.scoreLabel}>Games</Text>
-              <Text style={styles.scoreValue}>{team1Games}</Text>
-            </View>
-            <View style={styles.pointsContainer}>
-              <Text style={styles.points}>{getScoreDisplay(team1Score)}</Text>
-            </View>
-            <TouchableOpacity style={styles.addButton} onPress={addPointTeam1}>
-              <Ionicons name="add-circle" size={64} color="#10b981" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.teamColumn}>
-            <TouchableOpacity
-              style={styles.teamHeader}
-              onPress={() => openEditModal(2)}
-            >
-              <Text style={styles.teamName}>{team2Name}</Text>
-              <Ionicons
-                name="pencil"
-                size={16}
-                color="rgba(255, 255, 255, 0.6)"
-                style={styles.editIcon}
-              />
-            </TouchableOpacity>
-            <View style={styles.scoreRow}>
-              <Text style={styles.scoreLabel}>Sets</Text>
-              <Text style={styles.scoreValue}>{team2Sets}</Text>
-            </View>
-            <View style={styles.scoreRow}>
-              <Text style={styles.scoreLabel}>Games</Text>
-              <Text style={styles.scoreValue}>{team2Games}</Text>
-            </View>
-            <View style={styles.pointsContainer}>
-              <Text style={styles.points}>{getScoreDisplay(team2Score)}</Text>
-            </View>
-            <TouchableOpacity style={styles.addButton} onPress={addPointTeam2}>
-              <Ionicons name="add-circle" size={64} color="#10b981" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      <TouchableOpacity style={styles.resetButton} onPress={resetMatch}>
-        <Ionicons name="refresh" size={20} color="#ef4444" />
-        <Text style={styles.resetText}>Reset Match</Text>
-      </TouchableOpacity>
-
-      <Modal
-        visible={editingTeam !== null}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setEditingTeam(null)}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Rename Team</Text>
-            <TextInput
-              style={styles.input}
-              value={tempName}
-              onChangeText={setTempName}
-              placeholder="Enter team name"
-              placeholderTextColor="rgba(255, 255, 255, 0.4)"
-              autoFocus
-              maxLength={20}
-            />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setEditingTeam(null)}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={saveTeamName}
-              >
-                <Text style={styles.saveButtonText}>Save</Text>
-              </TouchableOpacity>
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.brand}>
+            <View style={styles.logo}>
+              <Ionicons
+          name="tennisball-outline"
+          size={30}
+          color={COLORS.black}
+        />
             </View>
+            <Text style={styles.brandName}>PADEL MATCH</Text>
+          </View>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Share match score"
+            style={styles.shareButton}
+            onPress={shareMatch}
+          >
+            <Ionicons name="share-outline" size={23} color={COLORS.dark} />
+          </TouchableOpacity>
+        </View>
+
+        <View
+          ref={scoreboardRef}
+          collapsable={false}
+          style={styles.scoreboardCapture}
+        >
+        {/* Match title */}
+        <View style={styles.titleSection}>
+          <Text style={styles.eyebrow}>MATCH COUNTER</Text>
+
+          <View style={styles.titleRow}>
+            <Text style={styles.matchTitle}>Friendly match</Text>
+
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={resetMatch}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.resetIcon}>↻</Text>
+              <Text style={styles.resetText}>Reset</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.matchInfoRow}>
+            <Text style={styles.matchInfo}>
+              {isTieBreak
+                ? "Tie-break · first to 7 by 2"
+                : `Set ${setNumber} · Best of 3`}
+            </Text>
           </View>
         </View>
-      </Modal>
-    </View>
+
+        {/* Player cards */}
+        <View
+          style={[
+            styles.playersContainer,
+            width < 360 && styles.playersContainerSmall,
+          ]}
+        >
+          {players.map((player, index) => (
+            <View
+              key={player.initials}
+              style={[
+                styles.playerCard,
+                index === 0 && styles.firstCard,
+              ]}
+            >
+              {/* Player name */}
+              <View style={styles.playerHeader}>
+                <View
+                  style={[
+                    styles.avatar,
+                    { backgroundColor: player.color },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.avatarText,
+                      { color: index === 0 ? COLORS.darkGreen : "#A83D30" },
+                    ]}
+                  >
+                    {player.initials}
+                  </Text>
+                </View>
+
+                <Text
+                  style={styles.playerName}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {player.name}
+                </Text>
+              </View>
+
+              {/* Score */}
+              <View style={styles.scoreContainer}>
+                <Text
+                  style={[
+                    styles.score,
+                    {
+                      color:
+                        index === 0 ? COLORS.dark : COLORS.coral,
+                    },
+                  ]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {getDisplayedScore(players, index)}
+                </Text>
+              </View>
+
+              {/* Games and sets */}
+              <View style={styles.statsRow}>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>GAMES</Text>
+                  <Text style={styles.statValue}>{player.games}</Text>
+                </View>
+
+                <View style={styles.statDivider} />
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>SETS</Text>
+                  <Text style={styles.statValue}>{player.sets}</Text>
+                </View>
+              </View>
+
+              {/* Add point */}
+              <TouchableOpacity
+                style={[
+                  styles.addButton,
+                  index === 0
+                    ? styles.darkAddButton
+                    : styles.limeAddButton,
+                ]}
+                onPress={() => addPoint(index)}
+                disabled={matchFinished}
+                activeOpacity={0.75}
+              >
+                <Text
+                  style={[
+                    styles.addButtonText,
+                    index === 0
+                      ? styles.whiteText
+                      : styles.darkButtonText,
+                  ]}
+                >
+                  <Text style={styles.plusSign}>＋ </Text>
+                  Add point
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+
+        {/* Match footer */}
+        <Text style={styles.footerText}>
+          {matchFinished
+            ? `${players[0].sets > players[1].sets
+                ? players[0].name
+                : players[1].name} wins the match!`
+            : `Set ${setNumber} of 3 · ${gamesText} games`}
+        </Text>
+        </View>
+
+        {/* Bottom panel */}
+        <View style={styles.bottomPanel}>
+          <Text style={styles.bottomPanelTitle}>Match settings</Text>
+          <Text style={styles.bottomPanelText}>
+            Best of 3 sets · Tie-break at 6–6
+          </Text>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    backgroundColor: "#003252",
+    backgroundColor: COLORS.background,
   },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 30,
+  },
+
+  scoreboardCapture: {
+    backgroundColor: COLORS.background,
+  },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 20,
+    marginBottom: 48,
   },
-  backButton: {
-    width: 48,
-    height: 48,
+
+  brand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+
+  logo: {
+    width: 49,
+    height: 49,
+    borderRadius: 16,
+    backgroundColor: COLORS.lime,
     alignItems: "center",
     justifyContent: "center",
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#fff",
-    letterSpacing: 0.5,
+
+  logoText: {
+    fontSize: 31,
+    color: COLORS.dark,
   },
+
+  brandName: {
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 2.5,
+    color: COLORS.dark
+  },
+
   shareButton: {
-    width: 48,
-    height: 48,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 1,
+    borderColor: "#E0E5DF",
     alignItems: "center",
     justifyContent: "center",
   },
-  screenshotView: {
-    flex: 1,
-  },
-  scoreBoard: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "stretch",
-    paddingHorizontal: 20,
-    paddingVertical: 30,
-  },
-  teamColumn: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "space-between",
-    maxWidth: "45%",
-  },
-  teamHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 20,
+
+  titleSection: {
     marginBottom: 20,
+  },
+
+  eyebrow: {
+    fontSize: 12,
+    letterSpacing: 2,
+    fontWeight: "700",
+    color: COLORS.muted,
+    marginBottom: 10,
+  },
+
+  titleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     gap: 8,
   },
-  teamName: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#fff",
-    letterSpacing: 1,
+
+  matchTitle: {
+    flexShrink: 1,
+    fontSize: 34,
+    fontWeight: "500",
+    letterSpacing: -1.7,
+    color: COLORS.dark,
   },
-  editIcon: {
-    marginLeft: 4,
+
+  resetButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
   },
-  scoreRow: {
-    width: "100%",
+
+  resetIcon: {
+    fontSize: 27,
+    color: COLORS.dark,
+  },
+
+  resetText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: COLORS.dark,
+  },
+
+  matchInfoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    marginBottom: 12,
+    marginTop: 32,
   },
-  scoreLabel: {
-    fontSize: 16,
-    color: "rgba(255, 255, 255, 0.7)",
+
+  matchInfo: {
+    fontSize: 14,
     fontWeight: "600",
+    color: COLORS.muted,
   },
-  scoreValue: {
-    fontSize: 24,
-    color: "#fff",
-    fontWeight: "700",
-  },
-  pointsContainer: {
-    marginVertical: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  points: {
-    fontSize: 72,
-    fontWeight: "800",
-    color: "#10b981",
-    textShadowColor: "rgba(16, 185, 129, 0.3)",
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 12,
-  },
-  divider: {
-    width: 2,
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    marginHorizontal: 20,
-    marginVertical: 10,
-  },
-  addButton: {
-    marginTop: 20,
-    padding: 10,
-  },
-  resetButton: {
+
+  liveContainer: {
     flexDirection: "row",
-    backgroundColor: "rgba(239, 68, 68, 0.2)",
-    borderWidth: 2,
-    borderColor: "#ef4444",
-    padding: 18,
-    borderRadius: 16,
     alignItems: "center",
-    justifyContent: "center",
-    marginHorizontal: 20,
-    marginBottom: 40,
-    gap: 10,
+    gap: 6,
   },
-  resetText: {
-    color: "#ef4444",
-    fontSize: 18,
+
+  liveDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#FFE5DE",
+    borderWidth: 5,
+    borderColor: "#FFE5DE",
+  },
+
+  liveText: {
+    fontSize: 12,
     fontWeight: "700",
+    color: COLORS.dark,
     letterSpacing: 0.5,
   },
-  modalOverlay: {
+
+  playersContainer: {
+    flexDirection: "row",
+    gap: 14,
+  },
+
+  playersContainerSmall: {
+    gap: 8,
+  },
+
+  playerCard: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContent: {
-    backgroundColor: "#003252",
-    borderRadius: 20,
-    padding: 30,
-    width: "85%",
-    maxWidth: 400,
+    minWidth: 0,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderColor: COLORS.border,
+    borderRadius: 30,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
   },
-  modalTitle: {
-    fontSize: 24,
+
+  firstCard: {
+    borderColor: "#BFCFC5",
+  },
+
+  playerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 49,
+  },
+
+  avatar: {
+    width: 49,
+    height: 49,
+    borderRadius: 25,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+
+  avatarText: {
+    fontSize: 13,
     fontWeight: "700",
-    color: "#fff",
-    marginBottom: 20,
+  },
+
+  playerName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 15,
+    fontWeight: "700",
+    color: COLORS.dark,
+  },
+
+  scoreContainer: {
+    height: 160,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  score: {
+    width: "100%",
+    fontSize: 120,
+    fontWeight: "700",
+    letterSpacing: -5,
+    lineHeight: 140,
+    fontVariant: ["tabular-nums"],
     textAlign: "center",
   },
-  input: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 18,
-    color: "#fff",
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
-  },
-  modalButtons: {
+
+  statsRow: {
     flexDirection: "row",
-    gap: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: COLORS.border,
+    height: 85,
+    marginBottom: 15,
   },
-  modalButton: {
+
+  stat: {
     flex: 1,
-    padding: 16,
-    borderRadius: 12,
     alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
   },
-  cancelButton: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
+
+  statDivider: {
+    width: 1,
+    backgroundColor: COLORS.border,
   },
-  cancelButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+
+  statLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    color: COLORS.muted,
   },
-  saveButton: {
-    backgroundColor: "#10b981",
+
+  statValue: {
+    fontSize: 27,
+    fontWeight: "500",
+    color: COLORS.dark,
   },
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
+
+  addButton: {
+    height: 68,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 0,
+  },
+
+  darkAddButton: {
+    backgroundColor: COLORS.darkGreen,
+  },
+
+  limeAddButton: {
+    backgroundColor: COLORS.lime,
+  },
+
+  addButtonText: {
+    fontSize: 15,
     fontWeight: "700",
   },
-});
 
-export default MatchScreen;
+  plusSign: {
+    fontSize: 21,
+    fontWeight: "500",
+  },
+
+  whiteText: {
+    color: COLORS.white,
+  },
+
+  darkButtonText: {
+    color: COLORS.dark,
+  },
+
+  footerText: {
+    textAlign: "center",
+    marginTop: 29,
+    fontSize: 14,
+    fontWeight: "500",
+    color: COLORS.muted,
+  },
+
+  bottomPanel: {
+    marginTop: "auto",
+    marginTop: 330,
+    borderTopWidth: 1,
+    borderColor: "#E7ECE7",
+    borderRadius: 24,
+    padding: 20,
+    backgroundColor: "#FAFBF9",
+  },
+
+  bottomPanelTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.dark,
+  },
+
+  bottomPanelText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: COLORS.muted,
+  },
+});
